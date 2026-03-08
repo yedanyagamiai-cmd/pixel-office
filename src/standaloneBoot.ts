@@ -231,10 +231,20 @@ export async function boot(): Promise<void> {
     console.log('[YEDAN] Wall sprites loaded');
   }
 
-  // 3. Settings
+  // 3. Load furniture assets (dynamic catalog)
+  try {
+    const furRes = await fetch('./assets/furniture-data.json');
+    if (furRes.ok) {
+      const furData = await furRes.json();
+      send({ type: 'furnitureAssetsLoaded', catalog: furData.catalog, sprites: furData.sprites });
+      console.log(`[YEDAN] ${furData.catalog.length} furniture assets loaded`);
+    }
+  } catch { console.warn('[Boot] furniture-data.json not found'); }
+
+  // 4. Settings
   send({ type: 'settingsLoaded', soundEnabled: false });
 
-  // 4. Pre-register agents
+  // 5. Pre-register agents
   const agentMeta: Record<number, { palette: number; hueShift: number }> = {};
   const folderNames: Record<number, string> = {};
   for (let i = 0; i < YEDAN_AGENTS.length; i++) {
@@ -248,12 +258,12 @@ export async function boot(): Promise<void> {
     folderNames,
   });
 
-  // 5. Load and send layout — this triggers agent spawn
+  // 6. Load and send layout — this triggers agent spawn
   const layout = await loadLayout();
   send({ type: 'layoutLoaded', layout });
   console.log('[YEDAN] Layout loaded, agents spawning...');
 
-  // 6. Start activity simulation after agents settle
+  // 7. Start activity simulation after agents settle
   setTimeout(() => {
     // Mark all agents as active immediately
     for (const a of YEDAN_AGENTS) {
