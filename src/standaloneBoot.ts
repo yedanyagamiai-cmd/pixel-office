@@ -15,7 +15,16 @@ const YEDAN_AGENTS = [
   { id: 7, name: 'browser-agent', folderName: 'Content Publishing' },
 ];
 
-const TOOLS = ['Write', 'Edit', 'Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'Task'];
+// Realistic tool names per agent role
+const AGENT_TOOLS: Record<number, string[]> = {
+  1: ['Read', 'WebFetch', 'Bash', 'Grep', 'Write'],
+  2: ['Bash', 'Read', 'Grep', 'Write', 'Glob'],
+  3: ['WebFetch', 'Read', 'Write', 'Bash', 'Grep'],
+  4: ['Task', 'Read', 'Write', 'Bash', 'Edit'],
+  5: ['WebFetch', 'Read', 'Grep', 'Bash', 'Write'],
+  6: ['WebFetch', 'Write', 'Read', 'Edit', 'Bash'],
+  7: ['WebFetch', 'Write', 'Bash', 'Read', 'Edit'],
+};
 
 function send(msg: unknown): void {
   window.postMessage(msg, '*');
@@ -111,53 +120,81 @@ async function loadLayout(): Promise<unknown> {
   }
 }
 
-// Simulate realistic agent activity
+// Simulate realistic agent activity — agents always busy
 function simulateActivity(): void {
-  // Tool activity cycle
-  setInterval(() => {
-    for (const agent of YEDAN_AGENTS) {
-      if (Math.random() < 0.12) {
-        const tool = TOOLS[Math.floor(Math.random() * TOOLS.length)];
-        const toolId = `t_${Date.now()}_${agent.id}_${Math.random().toString(36).slice(2, 6)}`;
-        send({ type: 'agentToolStart', id: agent.id, toolId, status: tool });
+  // Track active tools per agent to avoid overlapping
+  const activeTools = new Map<number, string | null>();
 
-        const dur = 3000 + Math.random() * 10000;
-        setTimeout(() => {
-          send({ type: 'agentToolDone', id: agent.id, toolId, status: 'done' });
-          setTimeout(() => send({ type: 'agentToolsClear', id: agent.id }), 400);
-        }, dur);
-      }
-    }
-  }, 2500);
+  // Give every agent an initial tool immediately
+  for (const agent of YEDAN_AGENTS) {
+    const tools = AGENT_TOOLS[agent.id];
+    const tool = tools[Math.floor(Math.random() * tools.length)];
+    const toolId = `t_${Date.now()}_${agent.id}_init`;
+    send({ type: 'agentToolStart', id: agent.id, toolId, status: tool });
+    activeTools.set(agent.id, toolId);
 
-  // Occasional waiting status
+    // Finish this initial tool after a random delay, then start cycling
+    const dur = 2000 + Math.random() * 5000;
+    setTimeout(() => {
+      send({ type: 'agentToolDone', id: agent.id, toolId, status: 'done' });
+      activeTools.set(agent.id, null);
+      // Small gap then start next tool
+      setTimeout(() => startNewTool(agent.id), 300 + Math.random() * 1500);
+    }, dur);
+  }
+
+  function startNewTool(agentId: number): void {
+    const tools = AGENT_TOOLS[agentId];
+    const tool = tools[Math.floor(Math.random() * tools.length)];
+    const toolId = `t_${Date.now()}_${agentId}_${Math.random().toString(36).slice(2, 6)}`;
+    send({ type: 'agentToolStart', id: agentId, toolId, status: tool });
+    activeTools.set(agentId, toolId);
+
+    const dur = 2000 + Math.random() * 8000;
+    setTimeout(() => {
+      send({ type: 'agentToolDone', id: agentId, toolId, status: 'done' });
+      activeTools.set(agentId, null);
+
+      // 85% chance to start next tool quickly, 15% chance for brief idle
+      const gap = Math.random() < 0.85
+        ? 200 + Math.random() * 800
+        : 2000 + Math.random() * 4000;
+      setTimeout(() => startNewTool(agentId), gap);
+    }, dur);
+  }
+
+  // Occasional waiting status (agent completed a turn)
   setInterval(() => {
     const a = YEDAN_AGENTS[Math.floor(Math.random() * YEDAN_AGENTS.length)];
-    if (Math.random() < 0.2) {
+    if (Math.random() < 0.15) {
       send({ type: 'agentStatus', id: a.id, status: 'waiting' });
-      setTimeout(() => send({ type: 'agentStatus', id: a.id, status: 'active' }), 2500 + Math.random() * 3000);
+      setTimeout(
+        () => send({ type: 'agentStatus', id: a.id, status: 'active' }),
+        2000 + Math.random() * 3000,
+      );
     }
-  }, 15000);
+  }, 12000);
 
   // Occasional sub-agent spawn
   setInterval(() => {
     const a = YEDAN_AGENTS[Math.floor(Math.random() * YEDAN_AGENTS.length)];
-    if (Math.random() < 0.08) {
+    if (Math.random() < 0.1) {
+      const tasks = ['Research', 'Analysis', 'Review', 'Testing', 'Deploy'];
+      const task = tasks[Math.floor(Math.random() * tasks.length)];
       const toolId = `sub_${Date.now()}`;
-      send({ type: 'agentToolStart', id: a.id, toolId, status: 'Subtask: Research' });
+      send({ type: 'agentToolStart', id: a.id, toolId, status: `Subtask: ${task}` });
       setTimeout(() => {
         send({ type: 'subagentClear', id: a.id, parentToolId: toolId });
         send({ type: 'agentToolsClear', id: a.id });
-      }, 8000 + Math.random() * 12000);
+      }, 6000 + Math.random() * 10000);
     }
-  }, 20000);
+  }, 18000);
 }
 
 export async function boot(): Promise<void> {
   console.log('[YEDAN] Pixel Office booting...');
 
   // Wait for React to mount and useExtensionMessages to listen
-  // The hook calls vscode.postMessage({type:'webviewReady'}) on mount
   await new Promise<void>((resolve) => {
     let resolved = false;
     const handler = (e: Event) => {
@@ -169,7 +206,6 @@ export async function boot(): Promise<void> {
       }
     };
     window.addEventListener('vscode-outgoing', handler);
-    // Safety timeout — if webviewReady already fired before we started listening
     setTimeout(() => {
       if (!resolved) {
         resolved = true;
@@ -198,11 +234,11 @@ export async function boot(): Promise<void> {
   // 3. Settings
   send({ type: 'settingsLoaded', soundEnabled: false });
 
-  // 4. Pre-register agents (buffered until layout loads)
+  // 4. Pre-register agents
   const agentMeta: Record<number, { palette: number; hueShift: number }> = {};
   const folderNames: Record<number, string> = {};
   for (let i = 0; i < YEDAN_AGENTS.length; i++) {
-    agentMeta[YEDAN_AGENTS[i].id] = { palette: i % 6, hueShift: 0 };
+    agentMeta[YEDAN_AGENTS[i].id] = { palette: i % 6, hueShift: i >= 6 ? 60 : 0 };
     folderNames[YEDAN_AGENTS[i].id] = YEDAN_AGENTS[i].folderName;
   }
   send({
@@ -219,7 +255,11 @@ export async function boot(): Promise<void> {
 
   // 6. Start activity simulation after agents settle
   setTimeout(() => {
+    // Mark all agents as active immediately
+    for (const a of YEDAN_AGENTS) {
+      send({ type: 'agentStatus', id: a.id, status: 'active' });
+    }
     simulateActivity();
     console.log('[YEDAN] Activity simulation running');
-  }, 3000);
+  }, 2000);
 }
